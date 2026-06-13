@@ -38,7 +38,7 @@ export default function ShellCommandsChart({ rows }: Props) {
           <Tooltip
             contentStyle={{ background: '#0f172a', border: '1px solid #1e293b' }}
             labelStyle={{ color: '#94a3b8' }}
-            formatter={(value: number) => [value.toLocaleString(), 'Calls']}
+            formatter={(value) => [Number(value ?? 0).toLocaleString(), 'Calls']}
           />
           <Bar dataKey="calls" fill="#22c55e" radius={[0, 3, 3, 0]} />
         </BarChart>

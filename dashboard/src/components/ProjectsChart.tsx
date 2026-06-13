@@ -47,7 +47,7 @@ export default function ProjectsChart({ rows }: Props) {
           <Tooltip
             contentStyle={{ background: '#0f172a', border: '1px solid #1e293b' }}
             labelStyle={{ color: '#94a3b8' }}
-            formatter={(value: number) => [`$${value.toFixed(2)}`, 'Cost']}
+            formatter={(value) => [`$${Number(value ?? 0).toFixed(2)}`, 'Cost']}
           />
           <Bar dataKey="cost" fill="#3b82f6" radius={[0, 3, 3, 0]} />
         </BarChart>
