@@ -1,8 +1,7 @@
 services:
   # ── Go HTTP server ─────────────────────────────────────────────────────────
   backend:
-    build:
-      context: ./server
+    image: thanhtunguet/codeburn-dashboard-backend
     restart: unless-stopped
     volumes:
       # Persist uploaded CSV data across container restarts.
@@ -11,8 +10,7 @@ services:
 
   # ── React SPA (static files served by nginx) ───────────────────────────────
   frontend:
-    build:
-      context: ./dashboard
+    image: thanhtunguet/codeburn-dashboard-frontend
     restart: unless-stopped
     # No ports: — only reachable by the proxy inside the Docker network.
     depends_on:
