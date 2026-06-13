@@ -1,12 +1,18 @@
-// codeburn-upload — zip CSV exports and send them to a CodeBurn dashboard server.
+// codeburn-upload — export CodeBurn data and upload it to the dashboard server.
+//
+// By default the tool runs `npx -y codeburn export <tmpdir>` automatically,
+// then zips the resulting CSVs and POSTs them to the server.
 //
 // Usage:
-//   go run . [flags]
+//
+//	codeburn-upload [flags]
 //
 // Flags:
-//   -server   Base URL of the dashboard server (default: http://localhost:8080)
-//   -dir      Directory containing the exported CSV files (default: current directory)
-//   -username Override the username (default: git config user.name)
+//
+//	-server    Server base URL. Reads CODEBURN_SERVER env first;
+//	           falls back to https://codeburn.thanhtunguet.io.vn
+//	-username  Username to upload as (default: git config user.name)
+//	-dir       Skip auto-export and upload CSVs from this directory instead
 package main
 
 import (
@@ -24,6 +30,8 @@ import (
 	"strings"
 )
 
+const defaultServer = "https://codeburn.thanhtunguet.io.vn"
+
 var csvFiles = []string{
 	"summary.csv",
 	"daily.csv",
@@ -36,12 +44,18 @@ var csvFiles = []string{
 }
 
 func main() {
-	serverURL := flag.String("server", "http://localhost:8080", "Dashboard server base URL")
-	exportDir := flag.String("dir", ".", "Directory containing exported CSV files")
+	// Server URL priority: -server flag > CODEBURN_SERVER env > defaultServer
+	envServer := os.Getenv("CODEBURN_SERVER")
+	if envServer == "" {
+		envServer = defaultServer
+	}
+
+	serverURL := flag.String("server", envServer, "Dashboard server base URL (env: CODEBURN_SERVER)")
 	username := flag.String("username", "", "Username to upload as (default: git config user.name)")
+	dir := flag.String("dir", "", "Upload CSVs from this directory instead of running codeburn export")
 	flag.Parse()
 
-	// Resolve username from git if not specified.
+	// ── Resolve username ──────────────────────────────────────────────────────
 	user := strings.TrimSpace(*username)
 	if user == "" {
 		out, err := exec.Command("git", "config", "user.name").Output()
@@ -51,16 +65,39 @@ func main() {
 		}
 		user = strings.TrimSpace(string(out))
 	}
-
 	fmt.Printf("Uploading as: %s\n", user)
 
-	// Build an in-memory ZIP containing all found CSV files.
+	// ── Resolve export directory ──────────────────────────────────────────────
+	exportDir := strings.TrimSpace(*dir)
+
+	if exportDir == "" {
+		// Auto-export: create a temp dir, run `npx -y codeburn export <dir>`.
+		tmpDir, err := os.MkdirTemp("", "codeburn-export-*")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: could not create temp dir: %v\n", err)
+			os.Exit(1)
+		}
+		defer os.RemoveAll(tmpDir) // clean up after upload regardless of outcome
+
+		fmt.Println("Running: npx -y codeburn export", tmpDir)
+		cmd := exec.Command("npx", "-y", "codeburn", "export", tmpDir)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: codeburn export failed: %v\n", err)
+			os.Exit(1)
+		}
+		exportDir = tmpDir
+	} else {
+		fmt.Printf("Using export directory: %s\n", exportDir)
+	}
+
+	// ── Build in-memory ZIP from CSV files ────────────────────────────────────
 	var zipBuf bytes.Buffer
 	zw := zip.NewWriter(&zipBuf)
 	found := 0
 	for _, name := range csvFiles {
-		path := filepath.Join(*exportDir, name)
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(filepath.Join(exportDir, name))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  skipping %s (not found)\n", name)
 			continue
@@ -81,15 +118,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error closing zip: %v\n", err)
 		os.Exit(1)
 	}
-
 	if found == 0 {
-		fmt.Fprintf(os.Stderr, "error: no CSV files found in %s\n", *exportDir)
+		fmt.Fprintf(os.Stderr, "error: no CSV files found in %s\n", exportDir)
 		os.Exit(1)
 	}
-
 	fmt.Printf("Zipped %d file(s) (%d bytes)\n", found, zipBuf.Len())
 
-	// Build multipart POST body.
+	// ── POST multipart upload ─────────────────────────────────────────────────
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	part, err := mw.CreateFormFile("file", "export.zip")
@@ -103,7 +138,6 @@ func main() {
 	}
 	mw.Close()
 
-	// POST to /upload/{username}
 	uploadURL := strings.TrimRight(*serverURL, "/") + "/upload/" + url.PathEscape(user)
 	fmt.Printf("Uploading to %s …\n", uploadURL)
 
@@ -119,6 +153,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "server returned %d: %s\n", resp.StatusCode, strings.TrimSpace(string(respBody)))
 		os.Exit(1)
 	}
-
 	fmt.Printf("Done. Server response: %s\n", strings.TrimSpace(string(respBody)))
 }
