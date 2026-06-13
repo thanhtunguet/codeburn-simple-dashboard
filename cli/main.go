@@ -1,7 +1,7 @@
 // codeburn-upload — export CodeBurn data and upload it to the dashboard server.
 //
-// By default the tool runs `npx -y codeburn export <tmpdir>` automatically,
-// then zips the resulting CSVs and POSTs them to the server.
+// Runs `npx -y codeburn export`, parses the exported directory path from its
+// output, zips the CSVs, and POSTs them to the dashboard server.
 //
 // Usage:
 //
@@ -17,6 +17,7 @@ package main
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
@@ -69,25 +70,16 @@ func main() {
 
 	// ── Resolve export directory ──────────────────────────────────────────────
 	exportDir := strings.TrimSpace(*dir)
+	autoExported := false // true when we ran codeburn export and own the directory
 
 	if exportDir == "" {
-		// Auto-export: create a temp dir, run `npx -y codeburn export <dir>`.
-		tmpDir, err := os.MkdirTemp("", "codeburn-export-*")
+		var err error
+		exportDir, err = runCodeburnExport()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: could not create temp dir: %v\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		defer os.RemoveAll(tmpDir) // clean up after upload regardless of outcome
-
-		fmt.Println("Running: npx -y codeburn export", tmpDir)
-		cmd := exec.Command("npx", "-y", "codeburn", "export", tmpDir)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: codeburn export failed: %v\n", err)
-			os.Exit(1)
-		}
-		exportDir = tmpDir
+		autoExported = true
 	} else {
 		fmt.Printf("Using export directory: %s\n", exportDir)
 	}
@@ -154,4 +146,72 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("Done. Server response: %s\n", strings.TrimSpace(string(respBody)))
+
+	// ── Offer to remove the exported directory ────────────────────────────────
+	if autoExported {
+		promptRemove(exportDir)
+	}
+}
+
+// runCodeburnExport runs `npx -y codeburn export`, streams its output to
+// stdout, and parses the exported directory path from a line of the form:
+//
+//	Exported (...) to: /some/path
+func runCodeburnExport() (string, error) {
+	fmt.Println("Running: npx -y codeburn export")
+
+	cmd := exec.Command("npx", "-y", "codeburn", "export")
+	cmd.Stderr = os.Stderr
+
+	// Capture stdout so we can parse it, while also streaming to the terminal.
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+
+	var exportDir string
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			fmt.Println(line) // echo to terminal
+
+			// Look for: "  Exported (...) to: /path/to/dir"
+			if idx := strings.LastIndex(line, "to: "); idx != -1 {
+				candidate := strings.TrimSpace(line[idx+4:])
+				if candidate != "" {
+					exportDir = candidate
+				}
+			}
+		}
+	}()
+
+	err := cmd.Run()
+	pw.Close()
+	<-done // wait for scanner goroutine to finish
+
+	if err != nil {
+		return "", fmt.Errorf("codeburn export failed: %w", err)
+	}
+	if exportDir == "" {
+		return "", fmt.Errorf("could not find exported directory path in codeburn output")
+	}
+	fmt.Printf("Exported to: %s\n", exportDir)
+	return exportDir, nil
+}
+
+// promptRemove asks the user whether to delete the exported directory.
+func promptRemove(dir string) {
+	fmt.Printf("\nRemove exported directory %s? [y/N] ", dir)
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		if strings.ToLower(strings.TrimSpace(scanner.Text())) == "y" {
+			if err := os.RemoveAll(dir); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not remove %s: %v\n", dir, err)
+			} else {
+				fmt.Printf("Removed %s\n", dir)
+			}
+		}
+	}
 }
