@@ -7,4 +7,11 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    proxy: {
+      '/users': 'http://localhost:8080',
+      '/upload': 'http://localhost:8080',
+      '/data': 'http://localhost:8080',
+    },
+  },
 })

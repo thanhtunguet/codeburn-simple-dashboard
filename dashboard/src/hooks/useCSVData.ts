@@ -16,28 +16,39 @@ async function fetchCSV<T>(path: string): Promise<T[]> {
   }).data;
 }
 
-export function useCSVData() {
+export function useCSVData(username: string | null) {
   const [data, setData] = useState<CSVData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!username) {
+      setData(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    const base = `/data/${encodeURIComponent(username)}`;
     Promise.all([
-      fetchCSV<SummaryRow>('/data/summary.csv'),
-      fetchCSV<DailyRow>('/data/daily.csv'),
-      fetchCSV<ActivityRow>('/data/activity.csv'),
-      fetchCSV<ModelRow>('/data/models.csv'),
-      fetchCSV<ProjectRow>('/data/projects.csv'),
-      fetchCSV<SessionRow>('/data/sessions.csv'),
-      fetchCSV<ToolRow>('/data/tools.csv'),
-      fetchCSV<ShellCommandRow>('/data/shell-commands.csv'),
+      fetchCSV<SummaryRow>(`${base}/summary.csv`),
+      fetchCSV<DailyRow>(`${base}/daily.csv`),
+      fetchCSV<ActivityRow>(`${base}/activity.csv`),
+      fetchCSV<ModelRow>(`${base}/models.csv`),
+      fetchCSV<ProjectRow>(`${base}/projects.csv`),
+      fetchCSV<SessionRow>(`${base}/sessions.csv`),
+      fetchCSV<ToolRow>(`${base}/tools.csv`),
+      fetchCSV<ShellCommandRow>(`${base}/shell-commands.csv`),
     ])
       .then(([summary, daily, activity, models, projects, sessions, tools, shellCommands]) => {
         setData({ summary, daily, activity, models, projects, sessions, tools, shellCommands });
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [username]);
 
   return { data, loading, error };
 }
