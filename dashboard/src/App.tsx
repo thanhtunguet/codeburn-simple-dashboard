@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useCSVData } from './hooks/useCSVData';
 import { useUsers } from './hooks/useUsers';
 import UserSelector from './components/UserSelector';
@@ -13,11 +13,36 @@ import ToolsChart from './components/ToolsChart';
 import ShellCommandsChart from './components/ShellCommandsChart';
 import type { Period } from './types';
 
+function getUserFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get('u');
+}
+
 export default function App() {
   const [period, setPeriod] = useState<Period>('30 Days');
-  const [selectedUser, setSelectedUser] = useState<string | null>(null);
+  const [rawSelectedUser, setSelectedUser] = useState<string | null>(getUserFromUrl());
   const { users, loading: usersLoading, error: usersError } = useUsers();
+  // Don't fetch data until the user list has loaded and the URL-provided user
+  // is confirmed to exist; otherwise fall back to no selection.
+  const selectedUser = !usersLoading && rawSelectedUser && users.includes(rawSelectedUser)
+    ? rawSelectedUser
+    : null;
   const { data, loading: dataLoading, error: dataError } = useCSVData(selectedUser);
+
+  // Keep selectedUser in sync with browser Back/Forward navigation.
+  useEffect(() => {
+    function handlePopState() {
+      setSelectedUser(getUserFromUrl());
+    }
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  function selectUser(username: string) {
+    setSelectedUser(username);
+    const url = new URL(window.location.href);
+    url.searchParams.set('u', username);
+    window.history.pushState(null, '', url);
+  }
 
   // ── Users loading/error ──────────────────────────────────────────────────
   if (usersLoading) {
@@ -68,7 +93,7 @@ export default function App() {
 
         {/* User selector */}
         <div className="mb-8">
-          <UserSelector users={users} selected={selectedUser} onSelect={setSelectedUser} />
+          <UserSelector users={users} selected={selectedUser} onSelect={selectUser} />
         </div>
 
         {/* Prompt to select a user */}
